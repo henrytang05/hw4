@@ -11,9 +11,6 @@ curl https://getcroc.schollz.com | bash
 # Install tmux
 apt install tmux -y
 
-# Pull project
-git clone https://github.com/henrytang05/hw4.git
-
 # Sync uv
 uv sync
 
