@@ -15,7 +15,7 @@ apt install tmux -y
 uv sync
 
 # Install torch GPU
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+uv pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
 
 # Install project
 uv pip install -e .
