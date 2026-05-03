@@ -217,7 +217,7 @@ class SoftActorCritic(nn.Module):
                 # DONE: \(student\): Add entropy bonus to the target values for SAC
                 # NOTE: use `self.entropy()`
                 next_action_entropy = self.entropy(next_action_distribution)
-                next_qs -= self.temperature * next_action_entropy
+                next_qs += self.temperature * next_action_entropy
 
             # DONE: \(student\): Compute the target Q-value
             # HINT: implement Equation (1) in Homework 4
