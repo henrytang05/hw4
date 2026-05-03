@@ -1,0 +1,427 @@
+\documentclass{article}
+
+%% Useful packages
+\usepackage{graphicx} % Required for inserting images
+\usepackage{fullpage,amsmath,amssymb,url,hyperref}
+\usepackage{enumitem}
+\usepackage{sectsty}
+\usepackage{tgpagella}
+\usepackage{tcolorbox}
+\usepackage{float}
+\usepackage{booktabs}
+\usepackage[skip=10pt plus1pt, indent=0pt]{parskip}
+\usepackage[edges]{forest}  % file structure
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+}
+\usepackage{cleveref}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{listings}
+
+%% Title formatting
+\makeatletter
+\def\@maketitle{%
+  \newpage
+  \null
+  \begin{center}%
+  \let \footnote \thanks
+    {\LARGE {\@title}\par}%
+    {\@author}%
+  \end{center}%
+  \par
+}
+\makeatother
+
+%% Useful math variables
+\def\D{\mathcal{D}}
+
+% Q functions
+\def\Q{Q_{\phi_k}}
+\def\Qn{Q_{\phi_{k+1}}}
+
+% Random variables
+\def\ra{{\textnormal{a}}}
+\def\rs{{\textnormal{s}}}
+
+% Random vectors
+\def\rva{{\mathbf{a}}}
+\def\rvs{{\mathbf{s}}}
+
+% Elements of random vectors
+\def\erva{{\textnormal{a}}}
+\def\ervs{{\textnormal{s}}}
+
+\newcommand{\xb}{\mathbf{x}}
+\newcommand{\yb}{\mathbf{y}}
+\newcommand{\wb}{\mathbf{w}}
+\newcommand{\Xb}{\mathbf{X}}
+\newcommand{\Yb}{\mathbf{Y}}
+\newcommand{\tr}{^T}
+\newcommand{\hb}{\mathbf{h}}
+\newcommand{\Hb}{\mathbf{H}}
+
+\DeclareFontShape{OT1}{cmtt}{bx}{n}{<5><6><7><8><9><10><10.95><12><14.4><17.28><20.74><24.88>cmttb10}{}
+
+
+\definecolor{light-yellow}{HTML}{FFE5CC}
+\lstset{
+    basicstyle=\ttfamily,
+    columns=fullflexible,
+    backgroundcolor=\color{light-yellow}
+}
+
+
+
+\title{CAS4160 Homework 4: Soft Actor-Critic}
+
+%% TODO: Replace "\color{red} [...]" with your name and student ID
+\author{
+    \textbf{TANG QUANG HUY} \\
+    \textbf{23125038}
+}
+
+
+\begin{document}
+
+\maketitle
+
+
+
+\section{Introduction}
+
+DQN is great for discrete action spaces. However, it requires calculating $\max_\rva Q(\rvs, \rva)$. Doing this is trivial for discrete action spaces, where you can exhaustively find which of the $n$ actions has the highest Q-value. However, in continuous action spaces, this can be a complex nonlinear optimization problem.
+
+Actor-critic methods get around this by learning an explicit policy, $\pi$, that is trained to maximize $\mathbb{E}_{\rva \sim \pi(\rva \mid \rvs)} Q(\rvs, \rva)$. Throughout this assignment, you will learn to implement one of the most popular algorithms in this line, Soft Actor-Critic (SAC).
+
+All experiments in this assignment can be executed with the following command:
+\begin{lstlisting}[language=bash,breaklines=true]
+  python cas4160/scripts/run_hw4.py -cfg experiments/sac/<CONFIG>.yaml
+\end{lstlisting}
+
+
+
+\section{Code Structure Overview}
+
+The code structure is similar to that of the previous homework. In this assignment, you mainly work with the following codes:
+\begin{itemize}
+    \item \verb|cas4160/scripts/run_hw4.py|: the main training loop for your SAC implementation.
+    \item \verb|cas4160/agents/sac_agent.py|: the SAC learner you will implement.
+    \item \verb|cas4160/networks/state_action_value_critic.py|: a simple MLP-based critic network, $Q(\rvs, \rva)$. Note that unlike the DQN's critic, which maps a state to an array of Q-values for all actions, this critic maps $(\rvs, \rva)$ to a single Q-value.
+    \item \verb|cas4160/env_configs/sac_config.py|: base configuration (and list of hyperparameters).
+    \item \verb|experiments/sac/*.yaml|: configuration files for the experiments.
+\end{itemize}
+
+
+
+\section{Training Loop}
+
+Before you start implementing SAC, you first need to complete all \verb|TODO|s in \verb|cas4160/scripts/run_hw4.py|. This is very similar to the DQN script in Homework 3, as both algorithms are off-policy methods!
+
+
+
+\section{Bootstrapping}
+
+As in DQN, we train our critic by ``bootstrapping'' from a target critic. Using the tuple $(\rvs_t, \rva_t, r_t, \rvs_{t+1}, d_{t})$ (where $d_t$ is the flag for whether the trajectory terminates after this transition), we set a target value $y$:
+\begin{equation}
+    y \gets r_t + \gamma (1-d_t) Q_\phi(\rvs_{t+1}, \rva_{t+1})\text{, where } \rva_{t+1} \sim \pi(\rva_{t+1} \mid \rvs_{t+1}).
+\end{equation}
+Then, we use this bootstrapped target, $y$, to update our critic, $Q_\phi$, by minimizing the L2 loss:
+\begin{equation}
+    \min_\phi (Q_\phi(\rvs_t, \rva_t) - y)^2.
+\end{equation}
+
+In practice, we stabilize learning by using a separate \textit{target network}, $Q_{\phi'}$. There are two common strategies for updating the target network, as covered in lectures:
+\begin{itemize}
+    \item \textbf{Hard update} (implemented in DQN): set $\phi' \gets \phi$ every $K$ steps.
+    \item \textbf{Soft update}: $\phi'$ is continually updated towards $\phi$ with \textit{Polyak averaging} (exponential moving average). After each update, we perform the following operation ($\tau$ is typically very small, e.g., $0.005$):
+    \begin{equation}
+        \phi' \gets \phi' + \tau(\phi-\phi').
+    \end{equation}
+\end{itemize}
+
+
+\subsection{Implementation}
+
+Let's first implement the critic update in \verb|cas4160/agents/sac_agent.py|:
+\begin{itemize}
+    \item Implement the bootstrapped critic update explained above in the \verb|update_critic| method. You do not need to implement \verb|next_action_entropy| at this point.
+    \item Update the critic for \verb|num_critic_updates| times in the \verb|update| method.
+    \item Implement soft and hard target network updates in \verb|update|.
+\end{itemize}
+
+
+%% TODO: Please answer the question below.
+\subsection{Experiments}
+\begin{itemize}
+    \item Train an agent on \verb|Pendulum-v1| with the configuration \verb|experiments/sac/sanity_pendulum_1.yaml|. 
+\begin{lstlisting}[language=bash,breaklines=true]
+  python cas4160/scripts/run_hw4.py -cfg experiments/sac/sanity_pendulum_1.yaml
+\end{lstlisting}
+    \item It will not get high reward yet as you are not training an actor. But, the Q-values should stabilize at some large negative number (like, $-700$). If the Q-values go to minus infinity or stay close to zero, there might be something wrong with your code.
+    \item The ``do-nothing'' reward for this environment is about $-10$ per step. Let's assume our agent always get ``do nothing'', so that they agent receives $-10$ every step and never terminates. Calculate (approximately) what should be the average Q-value you would expect over training batches considering the discount factor $\gamma=0.99$. 
+
+    \textbf{Answer:} 
+    \begin{equation}
+        Q = -10 + \gamma(-10) + \gamma^2(-10) + ... = -10\sum_{t=0}^\infty \gamma^t = -10\frac{1}{1-\gamma} = -1000.
+    \end{equation}
+\end{itemize}
+
+
+
+\section{Entropy Bonus and Soft Actor-Critic}
+
+In DQN, we use an $\epsilon$-greedy strategy to decide which action to take at a given time. In continuous spaces, we have several options for generating exploration noise.
+
+One of the most common approaches is providing an \textit{entropy bonus} to encourage the actor to have high entropy (i.e. to be \textit{more random}), scaled by a ``\textbf{temperature}'' coefficient $\beta$. For example, in the REPARAMETRIZE case:
+\begin{equation}
+    \mathcal L_\pi = Q(\rvs, \mu_\theta(\rvs) + \sigma_\theta(\rvs)\epsilon) + \beta\mathcal{H}(\pi_\theta(\cdot \mid \rvs))\text{, where } \epsilon \sim \mathcal{N}(0, 1),
+\end{equation}
+where entropy is defined as $\mathcal H(\pi(\cdot \mid \rvs)) = \mathbb{E}_{\rva \sim \pi}\left[-\log\pi(\rva \mid \rvs)\right]$.
+
+To make sure the entropy term is also factored into the Q-function, we use soft Q target values:
+\begin{equation}
+    y \gets r_t + \gamma(1-d_t)\left[Q_\phi(\rvs_{t+1}, \rva_{t+1}) + \beta\mathcal{H}(\pi(\cdot \mid \rvs_{t+1}))\right].
+\end{equation}
+This soft Q-values result in behaviors where the actor will choose more random actions when it is unsure of what action to take.
+Please refer to the SAC paper: {\url{https://arxiv.org/abs/1801.01290}} for more details.
+
+Note that maximizing entropy $\mathcal{H}(\pi_\theta) = -\mathbb{E}[\log \pi_\theta]$ requires differentiating \textit{through} the sampling distribution. We can do this via the ``reparametrization trick'' from lecture -- if you'd like a refresher, refer to the \Cref{sec:REPARAMETERIZE}.
+
+
+\subsection{Implementation}
+In this section, you need to compute (estimate) entropy of a policy and implement soft Q target values in \verb|cas4160/agents/sac_agent.py|:
+\begin{itemize}
+    \item Implement the \verb|entropy| method to calculate the approximate the entropy of an action distribution with one sample:
+    \begin{equation}
+        \mathcal{H}(\pi_\theta(\cdot \mid \rvs)) = \mathbb{E}_{\rva \sim \pi_\theta}\left[ -\log\pi_\theta(\rva \mid \rvs) \right] \approx -\log\pi_\theta(\hat{\rva} \mid \rvs)\text{, where } \hat{\rva} \sim \pi_\theta(\cdot \mid \rvs).
+    \end{equation}
+    \item Add the entropy term to the target critic values in \verb|update_critic|. % and the actor loss in \verb|update_actor()|.
+    \item Call \verb|update_actor| in \verb|update| to train the actor to maximize the entropy.
+\end{itemize}
+
+
+\subsection{Experiments}
+\begin{itemize}
+    \item Train an agent on \verb|Pendulum-v1| with the configuration \verb|experiments/sac/sanity_pendulum_2.yaml|, which learns soft Q-values and maximizes a policy entropy:
+\begin{lstlisting}[language=bash,breaklines=true]
+  python cas4160/scripts/run_hw4.py -cfg experiments/sac/sanity_pendulum_2.yaml
+\end{lstlisting}
+
+    \item The experiments log \verb|entropy| during the actor updates. Since the agent only maximizes its entropy, it should achieve (close to) the maximum possible entropy for a $1$-dimensional action space. The entropy is maximized when it is a uniform distribution:
+    \begin{equation}
+        \mathcal{H}(\mathcal{U}[-1, 1]) = \mathbb{E}[-\log p(x)] = -\log \frac{1}{2} = \log 2 \approx 0.69.
+    \end{equation}
+    Because currently our actor loss \textbf{only} consists of the entropy bonus (we have not implemented anything to maximize rewards yet), the entropy should increase until it reaches roughly this level. If the entropy is higher than this, or significantly lower, there can be something wrong with the code.
+
+    \item There is no result to report in this section.
+\end{itemize}
+
+
+
+\section{Actor Update with REINFORCE}
+
+To train our actor to maximize rewards, we can use the REINFORCE gradient estimator that we used in Homework 2! 
+
+The objective of the policy is to maximize the expected return and we need its gradient:
+\begin{equation}
+    \nabla_\theta\mathbb{E}_{\rvs \sim \mathcal{D}, \rva \sim \pi_\theta(\rva \mid \rvs)}\left[Q_\phi(\rvs, \rva)\right].
+\end{equation}
+As we learned in lecture and Homework 2, we can use REINFORCE to compute the policy gradient:
+\begin{equation}
+    \mathbb{E}_{\rvs \sim \mathcal{D}, \rva \sim \pi_\theta(\rva \mid \rvs)}\left[\nabla_\theta \log(\pi_\theta(\rva \mid \rvs))Q_\phi(\rvs, \rva)\right].
+\end{equation}
+Note that the actions $\rva$ are sampled from $\pi_\theta$ and we do \textbf{not} require real data samples. This means that to reduce the variance of this policy gradient, we can sample more actions from $\pi_\theta$ for any given state! You will implement this in your code using the \verb|num_actor_samples| parameter.
+
+
+\subsection{Implementation}
+
+In this section, you need to implement the REINFORCE policy gradient estimator in \verb|cas4160/agents/sac_agent.py|:
+\begin{itemize}
+    \item Implement the REINFORCE gradient estimator in the \verb|actor_loss_reinforce| method.
+\end{itemize}
+
+
+%% TODO: Please explain your experimental setups, add plots, and answer the questions below.
+\subsection{Experiments}
+\begin{itemize}
+    \item \textbf{Please note that each of the following experiments would take at least an hour.}    
+    \item Train an agent on \verb|InvertedPendulum-v4| using \verb|sanity_invertedpendulum_reinforce.yaml|. You should achieve a total reward close to 1000, which corresponds to staying upright for all time steps. However, the return may fluctuate, and occasional drops below 1000 are acceptable.
+\begin{lstlisting}[language=bash,breaklines=true]
+  python cas4160/scripts/run_hw4.py -cfg experiments/sac/sanity_invertedpendulum_reinforce.yaml
+\end{lstlisting}
+
+\textbf{Answer:} 
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{assets/black.jpg}
+    \caption{\textbf{\color{red}Replace this with your plot, and add the caption.}}
+\end{figure}
+
+    {\textbf{\color{red}Add your explanation.}}
+
+    \item Train an agent on \verb|HalfCheetah-v4| using the provided config (\verb|halfcheetah_reinforce1.yaml|). Note that this configuration uses only one sampled action for estimating policy gradients. The result should reach positive rewards in $500$K steps.
+\begin{lstlisting}[language=bash,breaklines=true]
+  python cas4160/scripts/run_hw4.py -cfg experiments/sac/halfcheetah_reinforce1.yaml
+\end{lstlisting}
+
+    \item Train another agent with \verb|halfcheetah_reinforce10.yaml|. This configuration takes $10$ action samples from the actor for computing the REINFORCE gradient. We call this REINFORCE-10 and the single-sample version above REINFORCE-1. REINFORCE-10 should achieve above $500$ evaluation returns in $200$K steps.
+    
+    \item Plot the results (evaluation return over time) of REINFORCE-1 and REINFORCE-10. Compare and explain your results.
+\begin{lstlisting}[language=bash,breaklines=true]
+  python cas4160/scripts/run_hw4.py -cfg experiments/sac/halfcheetah_reinforce10.yaml
+\end{lstlisting}
+
+\textbf{Answer:} 
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.7\textwidth]{assets/black.jpg}
+    \caption{\textbf{\color{red}Replace this with your plot, and add the caption.}}
+\end{figure}
+
+    {\textbf{\color{red}Add your explanation.}}
+
+\end{itemize}
+
+
+
+\section{Actor Update with REPARAMETRIZE}
+\label{sec:REPARAMETERIZE}
+
+REINFORCE works quite well with many samples, but particularly in high-dimensional action spaces, it starts to require a lot of samples to give low variance. We can improve this by using the reparametrized gradient. 
+
+If we parameterize $\pi_\theta$ as $\mu_\theta(\rvs) + \sigma_\theta(\rvs)\epsilon$, where $\epsilon$ is normally distributed, then we can write:
+\begin{equation}
+    \nabla_\theta\mathbb{E}_{\rvs \sim \mathcal{D}, \rva \sim \pi_\theta(\rva|\rvs)}\left[Q(\rvs, a)\right] = \nabla_\theta\mathbb{E}_{\rvs \sim \mathcal{D}, \epsilon \sim \mathcal{N}}\left[Q(\rvs, \mu_\theta(\rvs) + \sigma_\theta(\rvs)\epsilon))\right] = \mathbb{E}_{\rvs \sim \mathcal{D}, \epsilon \sim \mathcal{N}}\left[\nabla_\theta Q(\rvs, \mu_\theta(\rvs) + \sigma_\theta(\rvs)\epsilon))\right].
+\end{equation}
+This gradient estimator often provides a much lower variance, so it can be used with few samples (in practice, just using a single sample works very well).
+
+
+\subsection{Implementation}
+
+\begin{itemize}
+    \item Implement \verb|actor_loss_reparametrize()| in \verb|cas4160/agents/sac_agent.py|. Be careful to use the reparametrization trick for sampling (\verb|*.rsample()|)!
+\end{itemize}
+
+
+%% TODO: Please explain your experimental setups, add plots, and answer the questions below.
+\subsection{Experiments}
+\begin{itemize}
+    \item \textbf{Please note that each of the following experiments would take at least an hour.}
+    
+    \item Make sure you can solve \verb|InvertedPendulum-v4| (use \verb|sanity_invertedpendulum_reparametrize.yaml|). You should achieve reward close to 1000, which corresponds to staying upright for all time steps.
+\begin{lstlisting}[language=bash,breaklines=true]
+  python cas4160/scripts/run_hw4.py -cfg experiments/sac/sanity_invertedpendulum_reparametrize.yaml
+\end{lstlisting}
+
+    \item Train (once again) on \verb|HalfCheetah-v4| with \verb|halfcheetah_reparametrize.yaml|. Plot results for \textbf{all three gradient estimators} (REINFORCE-1, REINFORCE-10, and REPARAMETRIZE) on the same set of axes, with number of environment steps on the $x$-axis and evaluation return on the $y$-axis.
+\begin{lstlisting}[language=bash,breaklines=true]
+  python cas4160/scripts/run_hw4.py -cfg experiments/sac/halfcheetah_reparametrize.yaml
+\end{lstlisting}
+
+    \textbf{Answer:}
+    \begin{figure}[H]
+        \centering
+        \includegraphics[width=0.7\textwidth]{assets/black.jpg}
+        \caption{\textbf{\color{red}Replace this with your plot, and add the caption.}}
+    \end{figure}
+
+    {\textbf{\color{red}Add your explanation.}}
+    
+    \item \textbf{(Optional)} Train an agent for the \verb|Humanoid-v4| environment with \verb|humanoid.yaml| and plot results.
+\begin{lstlisting}[language=bash,breaklines=true]
+  python cas4160/scripts/run_hw4.py -cfg experiments/sac/humanoid.yaml
+\end{lstlisting}
+\end{itemize}
+
+
+
+\section{Stabilizing Target Values}
+
+As in DQN, the target $Q$ with a single critic exhibits \textit{overestimation bias}! There are a few commonly-used strategies to combat this:
+\begin{itemize}
+    \item \textbf{Double-Q}: learn two critics $Q_{\phi_A}, Q_{\phi_B}$, and keep two target networks $Q_{\phi_A'}, Q_{\phi_B'}$. Then, use $Q_{\phi'_A}$ to compute target values for $Q_{\phi_B}$ and vice versa (it's slightly different from Double DQN):
+    \[y_A = r + \gamma Q_{\phi_B'}(\rvs', \rva')\]
+    \[y_B = r + \gamma Q_{\phi_A'}(\rvs', \rva')\]
+    
+    \item \textbf{\textit{Clipped} double-Q}: learn two critics $Q_{\phi_A}, Q_{\phi_B}$ (and keep two target networks). Then, compute the target values as $\min(Q_{\phi_A'}, Q_{\phi_B'})$.
+    \[y_A = y_B = r + \gamma \min\left(Q_{\phi_A'}(\rvs', \rva'), Q_{\phi_B'}(\rvs', \rva')\right)\]
+\end{itemize}
+
+
+\subsection{Implementation}
+
+\begin{itemize}
+    \item Implement double-$Q$ and clipped double-$Q$ in the \verb|q_backup_strategy| function in \verb|sac_agent.py|.
+\end{itemize}
+
+
+%% TODO: Please explain your experimental setups, add plots, and answer the questions below.
+\subsection{Experiments}
+
+\begin{itemize}
+    \item \textbf{Please note that each of the following experiments would take around 20 minutes.}    
+    
+    \item Run single-$Q$, double-$Q$, and clipped double-$Q$ on \verb|Hopper-v4| using the corresponding configuration files. Which one works best? Plot the logged \verb|eval_return| from each of them as well as \verb|q_values|. Discuss how these results relate to overestimation bias. The default seed should work well, but if not, you may report results using a seed that shows the better tendency.
+\begin{lstlisting}[language=bash,breaklines=true]
+  python cas4160/scripts/run_hw4.py -cfg experiments/sac/hopper.yaml --seed 48
+  python cas4160/scripts/run_hw4.py -cfg experiments/sac/hopper_doubleq.yaml --seed 48
+  python cas4160/scripts/run_hw4.py -cfg experiments/sac/hopper_clipq.yaml --seed 48
+\end{lstlisting}
+
+    \textbf{Which one works the best? \textcolor{red}{Your answer.}}
+    
+    \textbf{Answer:}
+    \begin{figure}[H]
+        \centering
+        \includegraphics[width=0.6\textwidth]{assets/black.jpg}
+        \caption{\textbf{\color{red}Replace this with your plots (eval return and Q-values), and add the caption.}}
+    \end{figure}
+
+    {\textbf{\color{red}Add your explanation.}}
+
+    \item \textbf{(Optional)} Pick the best configuration among single-Q, double-Q, and clipped double-Q, and run it on \verb|Humanoid-v4| using \verb|humanoid.yaml| (\textbf{edit the config} to use the best option). Plot the default configuration (in the previous section) and the best configuration together with environment steps on the $x$-axis and evaluation return on the $y$-axis.
+    
+    \textbf{Note: if you'd like to run training to completion (5M steps, 24h of training), you should get a proper, walking humanoid! You can run with videos enabled by using \texttt{-nvid 1}.}
+\end{itemize}
+
+
+
+\section{Submission}
+
+Please submit the code and the report in a single zip file, \texttt{hw4\_[YourStudentID].zip}. Do not include videos and logs as the file size should be less than $20$MB. The structure of the submission file should be:
+
+\begin{forest}
+  for tree={
+    font=\ttfamily,
+    grow'=0,
+    child anchor=west,
+    parent anchor=south,
+    anchor=west,
+    calign=first,
+    edge path={
+      \noexpand\path [draw, \forestoption{edge}]
+      (!u.south west) +(7.5pt,0) |- node[fill,inner sep=1.25pt] {} (.child anchor)\forestoption{edge label};
+    },
+    before typesetting nodes={
+      if n=1
+        {insert before={[,phantom]}}
+        {}
+    },
+    fit=band,
+    before computing xy={l=15pt},
+  }
+[hw4\_\textcolor{red}{[YourStudentID]}.zip
+  [hw4\_\textcolor{red}{[YourStudentID]}.pdf]
+  [cas4160
+    [agents
+        [sac\_agent.py]
+    ]
+    [...]
+  ]
+  [...]
+]
+\end{forest}
+
+\end{document}

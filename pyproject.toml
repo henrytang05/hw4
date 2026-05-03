@@ -1,0 +1,19 @@
+[project]
+name = "hw4"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "gymnasium[accept-rom-license,atari,classic-control,mujoco]>=1.1.1",
+    "ipdb>=0.13.13",
+    "ipython>=8.18.1",
+    "matplotlib>=3.9.4",
+    "moviepy>=2.2.1",
+    "opencv-python>=4.13.0.92",
+    "pyyaml>=6.0.3",
+    "tensorboard>=2.20.0",
+    "tensorboardx>=2.6.5",
+    "torch>=2.8.0",
+    "tqdm>=4.67.3",
+]
